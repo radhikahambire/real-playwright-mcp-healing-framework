@@ -1,0 +1,57 @@
+name: Real MCP Self Healing Pipeline
+
+on:
+  workflow_dispatch:
+
+jobs:
+
+  playwright-healing:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Install Browsers
+        run: npx playwright install --with-deps
+
+      - name: Run Initial Tests
+        continue-on-error: true
+        run: npx playwright test
+
+      - name: Upload Failed Report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-playwright-report
+          path: |
+            playwright-report
+            test-results
+
+      - name: Start MCP + Self Healing
+        if: failure()
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: npm run heal
+
+      - name: Upload Healed Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: healed-playwright-report
+          path: |
+            artifacts/healed
+            artifacts/logs
+
+      - name: Completion
+        run: echo 'Pipeline Completed'

@@ -4,13 +4,10 @@ on:
   workflow_dispatch:
 
 jobs:
-
   playwright-healing:
-
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout Code
         uses: actions/checkout@v4
 
@@ -25,33 +22,103 @@ jobs:
       - name: Install Browsers
         run: npx playwright install --with-deps
 
-      - name: Run Initial Tests
+      ########################################################
+      # RUN INITIAL TEST
+      ########################################################
+
+      - name: Run Initial Playwright Test
+        id: initial_test
         continue-on-error: true
-        run: npx playwright test
+        run: |
+          npx playwright test
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
+
+      ########################################################
+      # SAVE FAILED REPORTS
+      ########################################################
+
+      - name: Save Failed Reports
+        if: steps.initial_test.outcome == 'failure'
+        run: |
+          mkdir -p artifacts/failed
+
+          cp -r playwright-report artifacts/failed/playwright-report || true
+          cp -r test-results artifacts/failed/test-results || true
+
+      ########################################################
+      # UPLOAD FAILED REPORT
+      ########################################################
 
       - name: Upload Failed Report
-        if: failure()
+        if: steps.initial_test.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
           name: failed-playwright-report
-          path: |
-            playwright-report
-            test-results
+          path: artifacts/failed
 
-      - name: Start MCP + Self Healing
-        if: failure()
+      ########################################################
+      # START PLAYWRIGHT MCP
+      ########################################################
+
+      - name: Start Playwright MCP
+        if: steps.initial_test.outcome == 'failure'
+        run: |
+          nohup npx @playwright/mcp@latest > mcp.log 2>&1 &
+
+      ########################################################
+      # RUN SELF HEALING
+      ########################################################
+
+      - name: Run OpenAI Self Healing
+        if: steps.initial_test.outcome == 'failure'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: npm run heal
+        run: |
+          npm run heal
 
-      - name: Upload Healed Report
+      ########################################################
+      # SAVE HEALED REPORTS
+      ########################################################
+
+      - name: Save Healed Reports
+        if: always()
+        run: |
+          mkdir -p artifacts/healed
+
+          cp -r playwright-report artifacts/healed/playwright-report || true
+          cp -r test-results artifacts/healed/test-results || true
+
+      ########################################################
+      # UPLOAD HEALED REPORTS
+      ########################################################
+
+      - name: Upload Healed Reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: healed-playwright-report
+          path: artifacts/healed
+
+      ########################################################
+      # UPLOAD LOGS
+      ########################################################
+
+      - name: Upload MCP Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-and-healing-logs
           path: |
-            artifacts/healed
+            mcp.log
             artifacts/logs
 
-      - name: Completion
-        run: echo 'Pipeline Completed'
+      ########################################################
+      # FINAL MESSAGE
+      ########################################################
+
+      - name: Completion Message
+        if: always()
+        run: |
+          echo "================================="
+          echo "Self-Healing Pipeline Completed"
+          echo "================================="

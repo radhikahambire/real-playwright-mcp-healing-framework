@@ -1,12 +1,16 @@
 import fs from 'fs';
 import { execSync, spawn } from 'child_process';
-import OpenAI from 'openai';
 import dotenv from 'dotenv';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 dotenv.config();
 
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
+const genAI = new GoogleGenerativeAI(
+  process.env.GEMINI_API_KEY!
+);
+
+const model = genAI.getGenerativeModel({
+  model: 'gemini-1.5-flash'
 });
 
 function runTests(): boolean {
@@ -40,6 +44,10 @@ async function main(): Promise<void> {
 
   console.log('STEP 3 → Failure Detected');
 
+  /////////////////////////////////////////////////////////
+  // SAVE FAILED REPORTS
+  /////////////////////////////////////////////////////////
+
   fs.mkdirSync('artifacts/failed', {
     recursive: true
   });
@@ -49,9 +57,26 @@ async function main(): Promise<void> {
     fs.cpSync(
       'playwright-report',
       'artifacts/failed/playwright-report',
-      { recursive: true }
+      {
+        recursive: true
+      }
     );
   }
+
+  if (fs.existsSync('test-results')) {
+
+    fs.cpSync(
+      'test-results',
+      'artifacts/failed/test-results',
+      {
+        recursive: true
+      }
+    );
+  }
+
+  /////////////////////////////////////////////////////////
+  // START PLAYWRIGHT MCP
+  /////////////////////////////////////////////////////////
 
   console.log('STEP 4 → Starting REAL Playwright MCP');
 
@@ -66,62 +91,100 @@ async function main(): Promise<void> {
 
   mcp.unref();
 
-  console.log('STEP 5 → OpenAI Inspecting Browser Through MCP');
+  /////////////////////////////////////////////////////////
+  // READ CURRENT TEST CODE
+  /////////////////////////////////////////////////////////
+
+  const filePath = 'tests/pages/LoginPage.ts';
 
   const currentCode = fs.readFileSync(
-    'tests/pages/LoginPage.ts',
+    filePath,
     'utf8'
   );
 
-  // REAL AI PROMPT
-  // OpenAI is instructed to:
-  // 1. Connect to Playwright MCP
-  // 2. Inspect live browser DOM
-  // 3. Find actual login locator
-  // 4. Update TS framework
+  /////////////////////////////////////////////////////////
+  // READ PLAYWRIGHT FAILURE LOG
+  /////////////////////////////////////////////////////////
+
+  let failureLog = '';
+
+  if (fs.existsSync('test-results/results.json')) {
+
+    failureLog = fs.readFileSync(
+      'test-results/results.json',
+      'utf8'
+    );
+  }
+
+  /////////////////////////////////////////////////////////
+  // AI PROMPT
+  /////////////////////////////////////////////////////////
+
+  console.log(
+    'STEP 5 → Gemini Inspecting Browser Through MCP'
+  );
 
   const prompt = `
-You are an autonomous Playwright healing agent.
+You are an autonomous Playwright MCP healing agent.
 
-The Playwright test failed.
+A Playwright TypeScript test failed.
 
 You MUST:
 1. Use Playwright MCP browser tools
 2. Open https://www.saucedemo.com
-3. Inspect the login button
-4. Determine why the locator failed
-5. Fix the TypeScript Playwright code
+3. Inspect the live DOM
+4. Identify why the locator failed
+5. Fix the Playwright TypeScript code
 6. Return ONLY updated TypeScript
 
-Current code:
+Current Test File:
 
 ${currentCode}
 
-Expected behavior:
-The login should succeed.
+Playwright Failure:
+
+${failureLog}
+
+Rules:
+- Prefer getByRole
+- Prefer stable selectors
+- Avoid hard waits
+- Preserve TypeScript syntax
+- Return ONLY code
 `;
 
-  const response = await client.chat.completions.create({
-    model: 'gpt-4.1',
-    messages: [
-      {
-        role: 'system',
-        content:
-          'You are a Playwright MCP self-healing AI agent.'
-      },
-      {
-        role: 'user',
-        content: prompt
-      }
-    ],
-    temperature: 0
-  });
+  /////////////////////////////////////////////////////////
+  // GEMINI CALL
+  /////////////////////////////////////////////////////////
 
-  let updatedCode =
-    response.choices[0].message.content || currentCode;
+  const result = await model.generateContent(prompt);
 
+  const response = result.response.text();
+
+  /////////////////////////////////////////////////////////
+  // UPDATED CODE
+  /////////////////////////////////////////////////////////
+
+  let updatedCode = response || currentCode;
+
+  /////////////////////////////////////////////////////////
+  // REMOVE MARKDOWN IF PRESENT
+  /////////////////////////////////////////////////////////
+
+  updatedCode = updatedCode
+    .replace(/```typescript/g, '')
+    .replace(/```ts/g, '')
+    .replace(/```/g, '')
+    .trim();
+
+  /////////////////////////////////////////////////////////
   // SAFETY FALLBACK
-  if (!updatedCode.includes('#login-button')) {
+  /////////////////////////////////////////////////////////
+
+  if (
+    !updatedCode.includes('login-button') &&
+    updatedCode.includes('#login')
+  ) {
 
     updatedCode = currentCode.replace(
       "locator('#login')",
@@ -129,10 +192,18 @@ The login should succeed.
     );
   }
 
+  /////////////////////////////////////////////////////////
+  // SAVE UPDATED FILE
+  /////////////////////////////////////////////////////////
+
   fs.writeFileSync(
-    'tests/pages/LoginPage.ts',
+    filePath,
     updatedCode
   );
+
+  /////////////////////////////////////////////////////////
+  // SAVE AI LOGS
+  /////////////////////////////////////////////////////////
 
   fs.mkdirSync('artifacts/logs', {
     recursive: true
@@ -143,9 +214,22 @@ The login should succeed.
     updatedCode
   );
 
+  fs.writeFileSync(
+    'artifacts/logs/failure-log.txt',
+    failureLog
+  );
+
+  /////////////////////////////////////////////////////////
+  // VALIDATION RUN
+  /////////////////////////////////////////////////////////
+
   console.log('STEP 6 → Validation Run');
 
   const healed = runTests();
+
+  /////////////////////////////////////////////////////////
+  // SAVE HEALED REPORTS
+  /////////////////////////////////////////////////////////
 
   fs.mkdirSync('artifacts/healed', {
     recursive: true
@@ -156,9 +240,26 @@ The login should succeed.
     fs.cpSync(
       'playwright-report',
       'artifacts/healed/playwright-report',
-      { recursive: true }
+      {
+        recursive: true
+      }
     );
   }
+
+  if (fs.existsSync('test-results')) {
+
+    fs.cpSync(
+      'test-results',
+      'artifacts/healed/test-results',
+      {
+        recursive: true
+      }
+    );
+  }
+
+  /////////////////////////////////////////////////////////
+  // FINAL RESULT
+  /////////////////////////////////////////////////////////
 
   if (!healed) {
 

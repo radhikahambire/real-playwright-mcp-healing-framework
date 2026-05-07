@@ -8,9 +8,9 @@
     "heal": "tsx src/ai/heal.ts"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@playwright/test": "^1.52.0",
-    "dotenv": "^16.5.0",
-    "openai": "^4.95.1"
+    "dotenv": "^16.5.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.17",

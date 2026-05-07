@@ -69,10 +69,10 @@ jobs:
       # RUN SELF HEALING
       ########################################################
 
-      - name: Run OpenAI Self Healing
+      - name: Run Gemini Ai Self Healing
         if: steps.initial_test.outcome == 'failure'
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           npm run heal
 
